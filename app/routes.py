@@ -6,11 +6,13 @@ from . import db
 main = Blueprint('main', __name__)
 
 @main.route('/')
-@login_required
 def index():
-    todo_tasks = Task.query.filter_by(status='todo', user_id=current_user.id).all()
-    done_tasks = Task.query.filter_by(status='done', user_id=current_user.id).all()
-    return render_template('index.html', todo_tasks=todo_tasks, done_tasks=done_tasks)
+    if current_user.is_authenticated:
+        todo_tasks = Task.query.filter_by(status='todo', user_id=current_user.id).all()
+        done_tasks = Task.query.filter_by(status='done', user_id=current_user.id).all()
+        return render_template('index.html', todo_tasks=todo_tasks, done_tasks=done_tasks)
+    else:
+        return render_template('welcome.html')
 
 @main.route('/add', methods=['POST'])
 @login_required
