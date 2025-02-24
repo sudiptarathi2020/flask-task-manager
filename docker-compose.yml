@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   web:
-    image: sudiptarathi2020/task-manager:latest
+    build: .
     ports:
       - "5000:5000"
     environment:
