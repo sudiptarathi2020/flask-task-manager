@@ -30,3 +30,11 @@ def complete_task(task_id):
     task.status = 'done'
     db.session.commit()
     return redirect(url_for('main.index'))
+
+@main.route('/delete/<int:task_id>')
+@login_required
+def delete_task(task_id):
+    task = Task.query.get(task_id)
+    db.session.delete(task)  # Delete the task from the database
+    db.session.commit()
+    return redirect(url_for('main.index'))
