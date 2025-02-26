@@ -17,13 +17,13 @@ A simple and secure task manager web application built with **Flask**, **MySQL**
 - **Dockerized**:
   - Easy deployment using **Docker** and **Docker Compose**.
 - **Responsive Design**:
-  - Built with **Bootstrap** for a clean and responsive UI.
+  - **CSS** for a clean and responsive UI.
 
 ---
 
 ## Technologies Used
 
-- **Backend**: Flask, Flask-Login, Flask-SQLAlchemy
-- **Frontend**: HTML, CSS (Bootstrap), JavaScript
+- **Backend**: Flask
+- **Frontend**: HTML, CSS (Bootstrap)
 - **Database**: MySQL
 - **Deployment**: Docker, Docker Compose, GitHub Actions, Amazon EC2
