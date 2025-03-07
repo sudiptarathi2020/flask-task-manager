@@ -1,0 +1,119 @@
+name: CI/CD for Flask App (Blue-Green Deployment)
+
+on:
+  push:
+    branches:
+      - main  # Trigger pipeline on push to main branch
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to Docker Hub
+        run: echo "${{ secrets.DOCKER_HUB_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_HUB_USERNAME }}" --password-stdin
+
+      - name: Build and Push Docker Image
+        run: |
+          docker build -t ${{ secrets.DOCKER_HUB_USERNAME }}/flask-task-manager .
+          docker push ${{ secrets.DOCKER_HUB_USERNAME }}/flask-task-manager
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Deploy to AWS EC2 (Blue-Green Deployment)
+        run: |
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > private_key.pem
+          chmod 600 private_key.pem
+
+          ssh -o StrictHostKeyChecking=no -i private_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << EOF
+
+            # Ensure Docker network exists
+            docker network create app_network || true
+
+            # Ensure MySQL is running - starts once, doesn't restart on app deployment
+            if ! docker ps --filter "name=mysql-db" | grep mysql-db; then
+              docker run -d \
+                --name mysql-db \
+                --network app_network \
+                -e MYSQL_ROOT_PASSWORD=root \
+                -e MYSQL_DATABASE=db \
+                -p 3306:3306 \
+                mysql:latest
+
+              echo "Waiting for MySQL to initialize..."
+              sleep 30
+            fi
+
+            # Health check loop to make sure MySQL is fully up
+            echo "Waiting for MySQL to become available..."
+            until docker exec mysql-db mysqladmin ping -h "localhost" --silent; do
+                echo "MySQL is not ready yet, retrying..."
+                sleep 15
+            done
+            echo "MySQL is ready, up and running"
+
+            # Determine current active and idle containers
+            if docker ps --filter "name=flask-app-blue" | grep flask-app-blue; then
+                ACTIVE_COLOR="blue"
+                IDLE_COLOR="green"
+                IDLE_PORT=5001
+            elif docker ps --filter "name=flask-app-green" | grep flask-app-green; then
+                ACTIVE_COLOR="green"
+                IDLE_COLOR="blue"
+                IDLE_PORT=5000
+            else
+                # First deployment case (default to blue)
+                ACTIVE_COLOR="none"
+                IDLE_COLOR="blue"
+                IDLE_PORT=5000
+            fi
+
+            echo "Active Color: \$ACTIVE_COLOR"
+            echo "Deploying to: \$IDLE_COLOR on port \$IDLE_PORT"
+
+            # Authenticate and pull the new image
+            docker login -u ${{ secrets.DOCKER_HUB_USERNAME }} -p ${{ secrets.DOCKER_HUB_PASSWORD }}
+            docker pull ${{ secrets.DOCKER_HUB_USERNAME }}/flask-task-manager
+
+            # Stop and remove the old idle container if it exists
+            docker stop flask-app-\$IDLE_COLOR || true
+            docker rm flask-app-\$IDLE_COLOR || true
+
+            # Run new Flask app in idle slot
+            docker run -d \
+              --name flask-app-\$IDLE_COLOR \
+              --network app_network \
+              -p \$IDLE_PORT:5000 \
+              -e FLASK_SECRET_KEY=${{ secrets.FLASK_SECRET_KEY }} \
+              -e DATABASE_URL=mysql+pymysql://root:root@mysql-db:3306/db \
+              ${{ secrets.DOCKER_HUB_USERNAME }}/flask-task-manager
+
+            echo "Successfully deployed to \$IDLE_COLOR"
+
+            # Switch NGINX to new idle port
+            echo "Updating NGINX to point to port \$IDLE_PORT"
+            sudo sed -i "s|localhost:[0-9]*|localhost:\$IDLE_PORT|g" /etc/nginx/conf.d/bluegreen.conf
+            sudo nginx -s reload
+
+            echo "Traffic switched to \$IDLE_COLOR"
+
+            # Optionally remove old active container (optional cleanup step, can be skipped for rollback flexibility)
+            if [ "\$ACTIVE_COLOR" != "none" ]; then
+                docker stop flask-app-\$ACTIVE_COLOR || true
+                docker rm flask-app-\$ACTIVE_COLOR || true
+                echo "Removed old \$ACTIVE_COLOR container"
+            fi
+
+          EOF
