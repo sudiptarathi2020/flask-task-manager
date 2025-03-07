@@ -37,13 +37,11 @@ jobs:
           ssh -o StrictHostKeyChecking=no -i private_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << EOF
             set -e  # Exit if any command fails
 
-            docker network create app_network || true
 
             # Ensure MySQL is running (only create once)
             docker ps --filter "name=mysql-db" | grep mysql-db || \
             docker run -d \
               --name mysql-db \
-              --network app_network \
               -e MYSQL_ROOT_PASSWORD="${{ secrets.MYSQL_ROOT_PASSWORD }}" \
               -e MYSQL_DATABASE=taskmanager \
               -p 3306:3306 \
@@ -72,7 +70,6 @@ jobs:
 
             docker run -d \
               --name flask-app-\$IDLE_COLOR \
-              --network app_network \
               -p \$IDLE_PORT:5000 \
               -e FLASK_SECRET_KEY="${{ secrets.FLASK_SECRET_KEY }}" \
               -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
