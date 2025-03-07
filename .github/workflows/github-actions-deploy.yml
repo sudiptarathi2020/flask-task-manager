@@ -77,7 +77,7 @@ jobs:
 
             echo "Deployed new app to \$IDLE_COLOR on port \$IDLE_PORT"
 
-            # Update NGINX to point to new color
+            # Update NGINX to point to new colour
             sudo sed -i "s/localhost:[0-9]*/localhost:\$IDLE_PORT/" /etc/nginx/conf.d/bluegreen.conf
             sudo nginx -s reload
 
