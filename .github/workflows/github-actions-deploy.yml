@@ -1,4 +1,4 @@
-name: Deploy to EC2
+name: CI/CD for Flask App (Blue-Green Deployment)
 
 on:
   push:
@@ -6,30 +6,89 @@ on:
       - main
 
 jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to Docker Hub
+        run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+      - name: Build and Push Docker Image
+        run: |
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/flask-task-manager .
+          docker push ${{ secrets.DOCKER_USERNAME }}/flask-task-manager
 
   deploy:
     runs-on: ubuntu-latest
-    steps:
-      - name: Install SSH Key
-        uses: shimataro/ssh-key-action@v2
-        with:
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          known_hosts: ${{ secrets.KNOWN_HOSTS }}
+    needs: build-and-push
 
-      - name: Deploy to EC2
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
+    steps:
+      - name: Deploy to AWS EC2 (Blue-Green)
         run: |
-          ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "
-            set -e  # Exit on error
-            cd /home/ubuntu/flask-task-manager &&
-            git fetch --all &&
-            git reset --hard origin/main &&
-            echo \"FLASK_SECRET_KEY='${{ secrets.FLASK_SECRET_KEY }}'\" > .env &&
-            echo \"DATABASE_URL='${{ secrets.DATABASE_URL }}'\" >> .env &&
-            echo \"MYSQL_ROOT_PASSWORD='${{ secrets.MYSQL_ROOT_PASSWORD }}'\" >> .env &&
-            docker-compose down &&
-            docker-compose up -d --build &&
-            docker image prune -af
-          "
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > private_key.pem
+          chmod 600 private_key.pem
+
+          ssh -o StrictHostKeyChecking=no -i private_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
+
+            set -e  # Exit if any command fails
+
+            docker network create app_network || true
+
+            # Ensure MySQL is running (only create once)
+            docker ps --filter "name=mysql-db" | grep mysql-db || \
+            docker run -d \
+              --name mysql-db \
+              --network app_network \
+              -e MYSQL_ROOT_PASSWORD="${{ secrets.MYSQL_ROOT_PASSWORD }}" \
+              -e MYSQL_DATABASE=taskmanager \
+              -p 3306:3306 \
+              mysql:latest
+
+            # Determine current active color
+            if docker ps --filter "name=flask-app-blue" | grep flask-app-blue; then
+                ACTIVE_COLOR="blue"
+                IDLE_COLOR="green"
+                IDLE_PORT="5001"
+            else
+                ACTIVE_COLOR="green"
+                IDLE_COLOR="blue"
+                IDLE_PORT="5000"
+            fi
+
+            echo "Active: \$ACTIVE_COLOR, Deploying to: \$IDLE_COLOR"
+
+            # Pull new image and deploy to idle color
+            docker login -u ${{ secrets.DOCKER_USERNAME }} -p ${{ secrets.DOCKER_PASSWORD }}
+            docker pull ${{ secrets.DOCKER_USERNAME }}/flask-task-manager
+
+            docker stop flask-app-\$IDLE_COLOR || true
+            docker rm flask-app-\$IDLE_COLOR || true
+
+            docker run -d \
+              --name flask-app-\$IDLE_COLOR \
+              --network app_network \
+              -p \$IDLE_PORT:5000 \
+              -e FLASK_SECRET_KEY="${{ secrets.FLASK_SECRET_KEY }}" \
+              -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+              ${{ secrets.DOCKER_USERNAME }}/flask-task-manager
+
+            echo "Deployed new app to \$IDLE_COLOR on port \$IDLE_PORT"
+
+            # Update NGINX to point to new color
+            sudo sed -i "s/localhost:[0-9]*/localhost:\$IDLE_PORT/" /etc/nginx/conf.d/bluegreen.conf
+            sudo nginx -s reload
+
+            echo "Switched traffic to \$IDLE_COLOR"
+
+            # Optional: Clean up old container
+            docker stop flask-app-\$ACTIVE_COLOR || true
+            docker rm flask-app-\$ACTIVE_COLOR || true
+
+          EOF
+
