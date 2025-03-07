@@ -1,6 +1,6 @@
 # Flask Task Manager
 
-A simple and secure task manager web application built with **Flask**, **MySQL**, and **Docker**. This app allows users to register, log in, and manage their tasks with a **To-Do** and **Done** list.
+A simple and secure task manager web application built with **Flask**, **MySQL**, and **Docker**. This app allows users to register, log in, and manage their tasks with a **To-Do** and **Done** list.Ok?
 
 ---
 
