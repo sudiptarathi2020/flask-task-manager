@@ -1,4 +1,3 @@
-import time
 import os
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
@@ -33,21 +32,15 @@ def create_app():
     from .routes import main as main_blueprint
     app.register_blueprint(main_blueprint)
 
-    # Wait for MySQL to be ready
+    # Try connecting to the database without waiting
     with app.app_context():
-        max_retries = 10
-        retry_delay = 5  # seconds
-        for attempt in range(1, max_retries + 1):
-            try:
-                # Test the database connection directly
-                db.session.execute(text('SELECT 1'))
-                db.create_all()
-                print("✅ Database connection successful!")
-                break
-            except OperationalError as e:
-                print(f"🔄 Attempt {attempt}/{max_retries}: Waiting for MySQL... ({e})")
-                time.sleep(retry_delay)
-        else:
-            raise RuntimeError("❌ Failed to connect to MySQL after multiple retries")
+        try:
+            # Test the database connection directly
+            db.session.execute(text('SELECT 1'))
+            db.create_all()
+            print("✅ Database connection successful!")
+        except OperationalError as e:
+            print(f"❌ Failed to connect to MySQL: {e}")
+            raise RuntimeError("Failed to connect to MySQL")
 
     return app

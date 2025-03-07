@@ -47,22 +47,11 @@ jobs:
               docker run -d \
                 --name mysql-db \
                 --network app_network \
-                -e MYSQL_ROOT_PASSWORD=root \
-                -e MYSQL_DATABASE=db \
+                -e MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }} \
+                -e MYSQL_DATABASE=${{ secrets.MYSQL_DATABASE }} \
                 -p 3306:3306 \
                 mysql:latest
-
-              echo "Waiting for MySQL to initialize..."
-              sleep 30
             fi
-
-            # Health check loop to make sure MySQL is fully up
-            echo "Waiting for MySQL to become available..."
-            until docker exec mysql-db mysqladmin ping -h "localhost" --silent; do
-                echo "MySQL is not ready yet, retrying..."
-                sleep 15
-            done
-            echo "MySQL is ready, up and running"
 
             # Determine current active and idle containers
             if docker ps --filter "name=flask-app-blue" | grep flask-app-blue; then
@@ -91,29 +80,22 @@ jobs:
             docker stop flask-app-\$IDLE_COLOR || true
             docker rm flask-app-\$IDLE_COLOR || true
 
-            # Run new Flask app in idle slot
+            # Deploy the new container
             docker run -d \
-              --name flask-app-\$IDLE_COLOR \
-              --network app_network \
-              -p \$IDLE_PORT:5000 \
-              -e FLASK_SECRET_KEY=${{ secrets.FLASK_SECRET_KEY }} \
-              -e DATABASE_URL=mysql+pymysql://root:root@mysql-db:3306/db \
-              ${{ secrets.DOCKER_HUB_USERNAME }}/flask-task-manager
+                --name flask-app-\$IDLE_COLOR \
+                --network app_network \
+                -e FLASK_SECRET_KEY=${{ secrets.FLASK_SECRET_KEY }} \
+                -e DATABASE_URL=${{ secrets.DATABASE_URL }} \
+                -p \$IDLE_PORT:5000 \
+                ${{ secrets.DOCKER_HUB_USERNAME }}/flask-task-manager
 
-            echo "Successfully deployed to \$IDLE_COLOR"
-
-            # Switch NGINX to new idle port
-            echo "Updating NGINX to point to port \$IDLE_PORT"
-            sudo sed -i "s|localhost:[0-9]*|localhost:\$IDLE_PORT|g" /etc/nginx/conf.d/bluegreen.conf
-            sudo nginx -s reload
-
-            echo "Traffic switched to \$IDLE_COLOR"
-
-            # Optionally remove old active container (optional cleanup step, can be skipped for rollback flexibility)
-            if [ "\$ACTIVE_COLOR" != "none" ]; then
-                docker stop flask-app-\$ACTIVE_COLOR || true
-                docker rm flask-app-\$ACTIVE_COLOR || true
-                echo "Removed old \$ACTIVE_COLOR container"
+            # Switch traffic to the new container if deployment is successful
+            if [ "\$IDLE_COLOR" == "blue" ]; then
+                docker stop flask-app-green || true
+                docker rm flask-app-green || true
+            else
+                docker stop flask-app-blue || true
+                docker rm flask-app-blue || true
             fi
 
-          EOF
+        EOF
