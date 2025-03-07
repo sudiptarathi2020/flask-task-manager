@@ -47,7 +47,18 @@ jobs:
               -e MYSQL_ROOT_PASSWORD="${{ secrets.MYSQL_ROOT_PASSWORD }}" \
               -e MYSQL_DATABASE=taskmanager \
               -p 3306:3306 \
+              --health-cmd="mysqladmin ping -h localhost" \
+              --health-interval=10s \
+              --health-timeout=5s \
+              --health-retries=3 \
               mysql:latest
+
+            # Wait for MySQL to be healthy
+            echo "Waiting for MySQL to be healthy..."
+            until [ "\$(docker inspect --format='{{json .State.Health.Status}}' mysql-db)" == "\"healthy\"" ]; do
+              sleep 5
+            done
+            echo "MySQL is healthy!"
 
             # Determine current active color
             if docker ps --filter "name=flask-app-blue" | grep flask-app-blue; then
