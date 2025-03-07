@@ -91,4 +91,3 @@ jobs:
             docker rm flask-app-\$ACTIVE_COLOR || true
 
           EOF
-
